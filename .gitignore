@@ -19,6 +19,7 @@ yarn.lock
 # Build files
 dist/
 build/
+uploads/
 
 # OS-specific files
 .DS_Store
