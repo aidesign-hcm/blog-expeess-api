@@ -172,6 +172,45 @@ exports.postByUser = async (req, res) => {
     });
   }
 };
+
+exports.postByManager = async (req, res) => {
+  const { _id } = req.user;
+  try {
+    const user =  await User.findById({_id})
+    console.log(user.categories)
+    const perPage = parseInt(req.query.perPage) || 20;
+    const page = parseInt(req.query.page) || 1;
+
+    // Fetch total count of posts that belong to at least one of the user's categories
+    const total = await Post.countDocuments({
+      categories: { $in: user.categories }, // Matches posts that have at least one category from the user
+    });
+
+    // Fetch posts
+    const posts = await Post.find({
+      categories: { $in: user.categories },
+    })
+      .sort({ createdAt: -1 }) // Sort newest first
+      .skip(perPage * (page - 1))
+      .limit(perPage)
+      .populate("categories");
+
+    res.status(200).json({
+      success: true,
+      total, 
+      posts, // Removed the redundant `blogs`
+    });
+  } catch (err) {
+    console.error("Error fetching posts by category:", err);
+    res.status(500).json({
+      success: false,
+      message: "Can't get posts",
+      error: err.message,
+    });
+  }
+};
+
+
 exports.getPosts = async (req, res) => {
   const { perPage = 20, page = 1, user, q } = req.body; // Extract search query and user
 

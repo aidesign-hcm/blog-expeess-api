@@ -13,6 +13,8 @@ router.get('/by-cat/:cat', postController.postByCat);
 
 router.get('/by-user',  passport.authenticate('user',{session: false}), postController.postByUser);
 
+router.get('/by-manager',  passport.authenticate('user',{session: false}), postController.postByManager);
+
 router.post("/all", passport.authenticate('user',{session: false}), postController.getPosts);
 
 router.post('/', passport.authenticate('user', { session: false }), postController.createpost);

@@ -25,6 +25,7 @@ exports.resizeImage = async (req, res, next) => {
 };
 
 exports.featureImg = async (req, res) => {
+  
   try {
     const media = await new Media({
       path: `uploads/media/${req.body.image}`,
@@ -36,6 +37,7 @@ exports.featureImg = async (req, res) => {
       featureImg: media,
     });
   } catch (err) {
+   
     res.json(500).status({
       error: err,
       success: false,

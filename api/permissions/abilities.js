@@ -19,7 +19,7 @@ function defineRulesFor(user) {
     case "editor":
       defineEditorRules(builder, user);
     case "manager":
-      defineWriterRules(builder, user);
+      defineManagerRules(builder, user);
       break;
     case "user":
       defineUserRules(builder, user);
@@ -40,9 +40,9 @@ function defineEditorRules({ can, cannot }, user) {
   can(["read", "update", "modify"], "Setting");
 }
 
-function defineWriterRules({ can, cannot }, user) {
+function defineManagerRules({ can, cannot }, user) {
   can(["read", "update"], ["User"], { _id: user._id });
-  can(["read", "update", "modify"], ["Post"], { user: user._id });
+  can(["read", "update", "modify"], ["Post"]);
 }
 
 function defineUserRules({ can, cannot }, user) {
