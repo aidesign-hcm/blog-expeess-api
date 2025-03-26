@@ -21,7 +21,7 @@ router.post('/', passport.authenticate('user', { session: false }), postControll
 
 router.post('/user-create', passport.authenticate('user', { session: false }), postController.userCreatepost);
 
-router.get('/admin/:id', passport.authenticate('user', { session: false }), verifyAdmin, postController.adminGetpost);
+router.get('/admin/:id', passport.authenticate('user', { session: false }),  postController.adminGetpost);
 
 router.get('/user/:id', passport.authenticate('user', { session: false }), postController.userGetpost);
 

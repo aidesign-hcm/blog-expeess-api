@@ -507,7 +507,8 @@ exports.updatepostByPut = async (req, res) => {
         $push: { revisions: { user: userId, timestamp: new Date() } }, // Add revision history
       },
       { new: true, upsert: true }
-    );
+    ).populate("user", "username rule") // Populate post owner
+    .populate("revisions.user", "username"); // Populate username in revisions
 
     if (!post) {
       return res.status(404).json({ success: false, message: "Post not found" });
@@ -521,14 +522,13 @@ exports.updatepostByPut = async (req, res) => {
       post.categories.push({ _id: categories });
     }
 
-    await post.save();
+    await post.save()
 
     res.status(200).json({
       post,
       success: true,
     });
   } catch (err) {
-    console.error(err);
     res.status(500).json({
       success: false,
       error: err.message,
