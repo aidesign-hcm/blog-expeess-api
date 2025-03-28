@@ -32,7 +32,7 @@ exports.getHomePosts = async (req, res) => {
 
     const newBlogs = await Post.aggregate([
       { $match: { isActive: true, isFeature: true  } },
-      { $sort: { createdAt: -1 } },
+      { $sort: { index: -1 } },
       { $limit: 9 },
       {
         $lookup: {
@@ -212,7 +212,8 @@ exports.postByManager = async (req, res) => {
 
 
 exports.getPosts = async (req, res) => {
-  const { perPage = 20, page = 1, user, q } = req.body; // Extract search query and user
+  const { perPage = 20, page = 1, user, q, category } = req.body; // Extract from body
+  const { feature } = req.query; // Extract feature from query parameters
 
   try {
     const query = {};
@@ -228,11 +229,29 @@ exports.getPosts = async (req, res) => {
       ];
     }
 
+    if (feature === "feature") {
+      query.isFeature = true; // Filter by isFeature if feature param is in query
+    }
+
+    if (category) {
+      // Find category by slug and get its ObjectId
+      const categoryDoc = await PostCat.findOne({ slug: category }).select("_id");
+
+      if (categoryDoc) {
+        query.categories = categoryDoc._id; // Filter posts with this category
+      } else {
+        return res.status(404).json({
+          message: "Category not found",
+          success: false,
+        });
+      }
+    }
+
     const total = await Post.countDocuments(query); // Count filtered posts
     const posts = await Post.find(query)
-      .populate("categories")
+      .populate("categories", "name slug")
       .populate("user", "username _id")
-      .sort({ createdAt: "desc" })
+      .sort({ index: -1, createdAt: "desc" }) // Sort by index (desc), then by createdAt (desc)
       .skip(perPage * (page - 1)) // Correct pagination calculation
       .limit(perPage);
 
@@ -250,6 +269,7 @@ exports.getPosts = async (req, res) => {
     });
   }
 };
+
 
 exports.createpost = async (req, res) => {
   try {
