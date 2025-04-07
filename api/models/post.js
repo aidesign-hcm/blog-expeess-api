@@ -26,8 +26,10 @@ const postSchema = mongoose.Schema(
       {
         user: { type: Schema.Types.ObjectId, ref: "User" }, // Who updated
         timestamp: { type: Date, default: Date.now }, // When updated
+        changes: { type: Object, default: {} }, // Track changes
       },
     ],
+    
   },
   { timestamps: true }
 );

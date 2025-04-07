@@ -169,16 +169,13 @@ exports.admin_change_password = async (req, res, next) => {
   const ability = defineAbilityFor(req.user);
   const _id = req.body._id;
   const newPassword = req.body.password;
-  let regPass = newPassword.match(
-    /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d]{6,}$/
-    // regex cho mật khẩu
-  );
+  let regPass = newPassword.match(/^(?=.{8,})/);
   try {
     let foundUser = await User.findById({ _id });
     if (!regPass) {
       return res.status(403).json({
         success: false,
-        message: "Password should be stronger",
+        message: "Mật khẩu phải chứa ít nhất: 1 chữ in hoa, 1 chữ thường, 1 số và có độ dài tối thiểu 8 ký tự.",
       });
     }
     ForbiddenError.from(ability).throwUnlessCan("update", foundUser);

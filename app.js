@@ -65,6 +65,7 @@ const mediaRouter = require('./api/routes/media');
 const postCatRouter = require('./api/routes/post_cat');
 const postRouter = require('./api/routes/post');
 const menuRouter = require('./api/routes/menu');
+const videoRouter = require('./api/routes/video');
 
 
 // Export router
@@ -74,7 +75,8 @@ app.use('/api/setting', settingRouter);
 app.use('/api/media', mediaRouter);
 app.use('/api/post_cat', postCatRouter);
 app.use('/api/post', postRouter);
-app.use('/api/menu', menuRouter );
+app.use('/api/menu', menuRouter);
+app.use('/api/video', videoRouter);
 
 
 app.get('/', (req, res) => {

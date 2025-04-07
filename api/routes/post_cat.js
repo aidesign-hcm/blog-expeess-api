@@ -47,7 +47,6 @@ router.post(
         category,
       });
     } catch (err) {
-      console.log(err);
       res.status(500).json({
         success: false,
         message: err,
@@ -64,7 +63,6 @@ router.get("/single/:id", async (req, res) => {
 
     res.status(201).send({ success: true, category });
   } catch (err) {
-    console.log(err);
     res.status(500).json({
       success: false,
       message: err,
@@ -80,7 +78,6 @@ router.get(
       const category = await PostCat.findById({ _id: req.params.id })
         // .populate("tags")
         .exec();
-      console.log(category);
       res.status(200).send({ success: true, category });
     } catch (err) {
       res.status(500).json({
@@ -102,7 +99,6 @@ router.delete(
       await category.remove();
       res.status(200).send({ success: true });
     } catch (err) {
-      console.log(err);
       res.status(500).json({
         success: false,
         message: err,
@@ -148,7 +144,6 @@ router.put(
         category,
       });
     } catch (err) {
-      console.log(err);
       res.status(500).json({
         success: false,
         message: err,
@@ -168,7 +163,6 @@ router.post("/get-all", async (req, res) => {
       .skip(perPage * page - perPage) // Trong page đầu tiên sẽ bỏ qua giá trị là 0
       .limit(perPage);
     const [total, categories] = await Promise.all([onTotal, onCategories]);
-    console.log(total);
     res.status(200).json({ success: true, categories, total });
   } catch (err) {
     res.status(500).json({
@@ -272,7 +266,6 @@ router.post(
         { $match: { name: title } },
         { $limit: 20 },
       ]);
-      console.log(categories);
       res.json({
         success: true,
         categories,

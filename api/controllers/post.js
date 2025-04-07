@@ -16,7 +16,7 @@ exports.getHomePosts = async (req, res) => {
       const posts = await Post.find({
         categories: category._id,
         isActive: true,
-      });
+      }).sort({ createdAt: "desc" });
 
       allPostPerCat.push({
         id: category._id,
@@ -36,7 +36,7 @@ exports.getHomePosts = async (req, res) => {
       { $limit: 9 },
       {
         $lookup: {
-          from: "postcats", // Correct collection name for PostCat
+          from: "postcats",
           localField: "categories",
           foreignField: "_id",
           as: "categories",
@@ -484,6 +484,7 @@ exports.postsGetpost = async (req, res) => {
     res.status(500).json({ message: "Post not found" });
   }
 };
+
 exports.updatepostByPut = async (req, res) => {
   try {
     const { id } = req.params;
@@ -500,55 +501,96 @@ exports.updatepostByPut = async (req, res) => {
       isFeature,
     } = req.body;
 
-    const userId = req.user._id; // Assuming user authentication middleware is applied
+    const userId = req.user._id;
 
-    // Ensure file is stored as an array of objects with `path`
-    let fileArray = [];
-    if (Array.isArray(file)) {
-      fileArray = file.map((f) => ({ path: f.path })); // Normalize file structure
-    } else if (file?.path) {
-      fileArray = [{ path: file.path }]; // Convert single file to an array
+    // Normalize file array
+    const fileArray = Array.isArray(file)
+      ? file.map((f) => ({ path: f.path }))
+      : file?.path
+      ? [{ path: file.path }]
+      : [];
+
+    // Get the existing post
+    const oldPost = await Post.findById(id).lean();
+    if (!oldPost) {
+      return res.status(404).json({ success: false, message: "Post not found" });
     }
 
+    // Compute field diffs
+    const changes = {};
+    const fieldsToCheck = {
+      title,
+      desc,
+      short,
+      isActive,
+      index,
+      slug,
+      featureImg,
+      isFeature,
+      file: fileArray,
+    };
+
+    for (const key in fieldsToCheck) {
+      const newVal = fieldsToCheck[key];
+      const oldVal = oldPost[key];
+      const isEqual = JSON.stringify(newVal) === JSON.stringify(oldVal);
+
+      if (!isEqual) {
+        if (key === "desc" || key === "short") {
+          changes[key] = { changed: true }; // only mark as changed
+        } else {
+          changes[key] = { old: oldVal, new: newVal };
+        }
+      }
+    }
+
+    // Compare categories
+    const oldCats = (oldPost.categories || []).map((c) => c._id?.toString?.() || c.toString()).sort();
+    const newCats = (Array.isArray(categories) ? categories : [categories])
+      .filter(Boolean)
+      .map((c) => c.toString())
+      .sort();
+    console.log(newCats)
+
+    const oldCatsLog = await PostCat.find({ _id: { $in: oldCats } }).select('name');
+    const newCatsLog = await PostCat.find({ _id: { $in: newCats } }).select('name');
+
+    if (JSON.stringify(oldCats) !== JSON.stringify(newCats)) {
+      changes.categories = {
+        old: oldCatsLog.map((cat) => cat.name),
+        new: newCatsLog.map((cat) => cat.name),
+      };
+    }
+
+    // Update post in DB
     const post = await Post.findByIdAndUpdate(
       id,
       {
         $set: {
-          title,
-          desc,
-          short,
-          isActive,
-          index,
-          slug,
-          featureImg,
-          file: fileArray, // Ensure files are stored correctly
-          isFeature,
+          ...fieldsToCheck,
+          categories: newCats.map((catId) => ({ _id: catId })),
         },
-        $push: { revisions: { user: userId, timestamp: new Date() } }, // Add revision history
+        $push: {
+          revisions: {
+            user: userId,
+            timestamp: new Date(),
+            changes,
+          },
+        },
       },
-      { new: true, upsert: true }
-    ).populate("user", "username rule") // Populate post owner
-    .populate("revisions.user", "username"); // Populate username in revisions
+      { new: true }
+    )
+      .populate("user", "username rule")
+      .populate("revisions.user", "username")
 
-    if (!post) {
-      return res.status(404).json({ success: false, message: "Post not found" });
-    }
-
-    // Update categories separately
-    post.categories = [];
-    if (Array.isArray(categories)) {
-      post.categories = categories.map((cat) => ({ _id: cat }));
-    } else if (categories) {
-      post.categories.push({ _id: categories });
-    }
-
-    await post.save()
+    await post.save();
 
     res.status(200).json({
-      post,
       success: true,
+      post,
     });
   } catch (err) {
+    console.log(err)
     res.status(500).json({
       success: false,
       error: err.message,
@@ -563,31 +605,75 @@ exports.userUpdatepostByPut = async (req, res) => {
     const userId = req.user._id;
     const { title, desc, categories, short, featureImg, slug, file } = req.body;
 
-    // Find the post and check if the user is the owner
-    const post = await Post.findOneAndUpdate(
-      { _id: id, user: userId },
-      {
-        $set: { title, desc, short, slug, featureImg, file },
-        $push: { revisions: { user: userId, timestamp: new Date() } }, // Track updates
-      },
-      { new: true, upsert: true }
-    );
+    const fileArray = Array.isArray(file)
+      ? file.map((f) => ({ path: f.path }))
+      : file?.path
+      ? [{ path: file.path }]
+      : [];
 
-    if (!post) {
+    // Get old post for comparison
+    const oldPost = await Post.findOne({ _id: id, user: userId }).lean();
+    if (!oldPost) {
       return res.status(404).json({ success: false, message: "Post not found or unauthorized" });
     }
 
-    // Set `isActive` based on user role
-    if (["editor", "manager", "admin"].includes(req.user.rule)) {
-      post.isActive = true;
-    } else {
-      post.isActive = false;
+    const changes = {};
+    const fieldsToCheck = { title, desc, short, slug, featureImg, file: fileArray };
+
+    for (const key in fieldsToCheck) {
+      const newVal = fieldsToCheck[key];
+      const oldVal = oldPost[key];
+      const isEqual = JSON.stringify(newVal) === JSON.stringify(oldVal);
+
+      if (!isEqual) {
+        if (key === "desc" || key === "short") {
+          changes[key] = { changed: true };
+        } else {
+          changes[key] = { old: oldVal, new: newVal };
+        }
+      }
     }
 
-    // Update categories
-    post.categories = Array.isArray(categories)
-      ? categories.map((catId) => ({ _id: catId }))
-      : [{ _id: categories }];
+    // Compare categories
+    const oldCats = (oldPost.categories || []).map((c) => c._id?.toString?.() || c.toString()).sort();
+    const newCats = (Array.isArray(categories) ? categories : [categories])
+      .filter(Boolean)
+      .map((c) => c.toString())
+      .sort();
+
+    if (JSON.stringify(oldCats) !== JSON.stringify(newCats)) {
+      changes.categories = {
+        old: oldCats,
+        new: newCats,
+      };
+    }
+
+    // Update post
+    const post = await Post.findOneAndUpdate(
+      { _id: id, user: userId },
+      {
+        $set: {
+          title,
+          desc,
+          short,
+          slug,
+          featureImg,
+          file: fileArray,
+          categories: newCats.map((catId) => ({ _id: catId })),
+        },
+        $push: {
+          revisions: {
+            user: userId,
+            timestamp: new Date(),
+            changes,
+          },
+        },
+      },
+      { new: true }
+    ).populate("revisions.user", "username");
+
+    // Role-based activation
+    post.isActive = ["editor", "manager", "admin"].includes(req.user.rule);
 
     await post.save();
 
@@ -603,6 +689,7 @@ exports.userUpdatepostByPut = async (req, res) => {
     });
   }
 };
+
 
 
 exports.postDelete = async (req, res) => {
