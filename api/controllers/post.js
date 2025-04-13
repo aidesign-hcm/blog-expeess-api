@@ -7,7 +7,6 @@ const User = require("../models/user");
 
 exports.getHomePosts = async (req, res) => {
   try {
-   
     const cat = await PostCat.find({ isFeature: true }).sort({ index: "desc" });
 
     const allPostPerCat = [];
@@ -16,13 +15,21 @@ exports.getHomePosts = async (req, res) => {
       const posts = await Post.find({
         categories: category._id,
         isActive: true,
-      }).sort({ createdAt: "desc" });
+      })
+        .select("-desc -revisions")
+        .populate({
+          path: "categories",
+          select: "name iconImg block", // Only include name and imgIcon
+        })
+        .limit(10)
+        .sort({ createdAt: "desc" });
 
       allPostPerCat.push({
         id: category._id,
         name: category.name,
         slug: category.slug,
         index: category.index,
+        block: category.block,
         posts: posts,
       });
     }
@@ -31,7 +38,7 @@ exports.getHomePosts = async (req, res) => {
     allPostPerCat.sort((a, b) => a.index - b.index);
 
     const newBlogs = await Post.aggregate([
-      { $match: { isActive: true, isFeature: true  } },
+      { $match: { isActive: true, isFeature: true } },
       { $sort: { index: -1 } },
       { $limit: 9 },
       {
@@ -40,6 +47,16 @@ exports.getHomePosts = async (req, res) => {
           localField: "categories",
           foreignField: "_id",
           as: "categories",
+        },
+      },
+      {
+        $project: {
+          desc: 0,
+          revisions: 0,
+          "categories.slug": 0, // Optionally exclude unwanted fields
+          "categories.index": 0,
+          "categories.isFeature": 0,
+          "categories.__v": 0,
         },
       },
     ]);
@@ -104,6 +121,7 @@ exports.postByCat = async (req, res) => {
     const posts = await Post.find({
       $and: [{ isActive: true }, { categories: catId._id }],
     })
+      .select("-desc -revisions")
       .populate("categories")
       .sort({ createdAt: -1 }) // Use -1 for descending order
       .skip(perPage * (page - 1))
@@ -120,7 +138,17 @@ exports.postByCat = async (req, res) => {
           as: "categories",
         },
       },
-    ]);
+      {
+        $project: {
+          desc: 0,
+          revisions: 0,
+          "categories.slug": 0, // Optionally exclude unwanted fields
+          "categories.index": 0,
+          "categories.isFeature": 0,
+          "categories.__v": 0,
+        },
+      },
+    ])
     res.status(200).json({
       success: true,
       total, // Corrected total count
@@ -153,10 +181,11 @@ exports.postByUser = async (req, res) => {
     const posts = await Post.find({
       $and: [{ user: _id }],
     })
+    .select('-desc -revisions')
       .sort({ createdAt: -1 }) // Use -1 for descending order
       .skip(perPage * (page - 1))
       .limit(perPage)
-      .populate("categories");
+      .populate("categories")
     res.status(200).json({
       success: true,
       total, // Corrected total count
@@ -176,8 +205,7 @@ exports.postByUser = async (req, res) => {
 exports.postByManager = async (req, res) => {
   const { _id } = req.user;
   try {
-    const user =  await User.findById({_id})
-    console.log(user.categories)
+    const user = await User.findById({ _id });
     const perPage = parseInt(req.query.perPage) || 20;
     const page = parseInt(req.query.page) || 1;
 
@@ -197,7 +225,7 @@ exports.postByManager = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      total, 
+      total,
       posts, // Removed the redundant `blogs`
     });
   } catch (err) {
@@ -209,7 +237,6 @@ exports.postByManager = async (req, res) => {
     });
   }
 };
-
 
 exports.getPosts = async (req, res) => {
   const { perPage = 20, page = 1, user, q, category } = req.body; // Extract from body
@@ -235,7 +262,9 @@ exports.getPosts = async (req, res) => {
 
     if (category) {
       // Find category by slug and get its ObjectId
-      const categoryDoc = await PostCat.findOne({ slug: category }).select("_id");
+      const categoryDoc = await PostCat.findOne({ slug: category }).select(
+        "_id"
+      );
 
       if (categoryDoc) {
         query.categories = categoryDoc._id; // Filter posts with this category
@@ -269,7 +298,6 @@ exports.getPosts = async (req, res) => {
     });
   }
 };
-
 
 exports.createpost = async (req, res) => {
   try {
@@ -341,11 +369,15 @@ exports.userCreatepost = async (req, res) => {
     });
     // post.featureImg = null
     // post.featureImg = featureImg
-    console.log(req.user.rule)
-    if(req.user.rule === 'editor' || req.user.rule === 'manager'  || req.user.rule === 'admin' ){
-      post.isActive = true
+    console.log(req.user.rule);
+    if (
+      req.user.rule === "editor" ||
+      req.user.rule === "manager" ||
+      req.user.rule === "admin"
+    ) {
+      post.isActive = true;
     } else {
-      post.isActive = false
+      post.isActive = false;
     }
     if (typeof categories === "object") {
       const categoriesFormat = categories.map((obj) => {
@@ -394,7 +426,6 @@ exports.adminGetpost = async (req, res) => {
     });
   }
 };
-
 
 exports.userGetpost = async (req, res) => {
   const ability = defineAbilityFor(req.user);
@@ -499,6 +530,7 @@ exports.updatepostByPut = async (req, res) => {
       slug,
       file,
       isFeature,
+      video,
     } = req.body;
 
     const userId = req.user._id;
@@ -513,7 +545,9 @@ exports.updatepostByPut = async (req, res) => {
     // Get the existing post
     const oldPost = await Post.findById(id).lean();
     if (!oldPost) {
-      return res.status(404).json({ success: false, message: "Post not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Post not found" });
     }
 
     // Compute field diffs
@@ -528,6 +562,7 @@ exports.updatepostByPut = async (req, res) => {
       featureImg,
       isFeature,
       file: fileArray,
+      video,
     };
 
     for (const key in fieldsToCheck) {
@@ -545,15 +580,20 @@ exports.updatepostByPut = async (req, res) => {
     }
 
     // Compare categories
-    const oldCats = (oldPost.categories || []).map((c) => c._id?.toString?.() || c.toString()).sort();
+    const oldCats = (oldPost.categories || [])
+      .map((c) => c._id?.toString?.() || c.toString())
+      .sort();
     const newCats = (Array.isArray(categories) ? categories : [categories])
       .filter(Boolean)
       .map((c) => c.toString())
       .sort();
-    console.log(newCats)
 
-    const oldCatsLog = await PostCat.find({ _id: { $in: oldCats } }).select('name');
-    const newCatsLog = await PostCat.find({ _id: { $in: newCats } }).select('name');
+    const oldCatsLog = await PostCat.find({ _id: { $in: oldCats } }).select(
+      "name"
+    );
+    const newCatsLog = await PostCat.find({ _id: { $in: newCats } }).select(
+      "name"
+    );
 
     if (JSON.stringify(oldCats) !== JSON.stringify(newCats)) {
       changes.categories = {
@@ -581,7 +621,7 @@ exports.updatepostByPut = async (req, res) => {
       { new: true }
     )
       .populate("user", "username rule")
-      .populate("revisions.user", "username")
+      .populate("revisions.user", "username");
 
     await post.save();
 
@@ -590,7 +630,7 @@ exports.updatepostByPut = async (req, res) => {
       post,
     });
   } catch (err) {
-    console.log(err)
+    console.log(err);
     res.status(500).json({
       success: false,
       error: err.message,
@@ -598,12 +638,12 @@ exports.updatepostByPut = async (req, res) => {
   }
 };
 
-
 exports.userUpdatepostByPut = async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user._id;
-    const { title, desc, categories, short, featureImg, slug, file } = req.body;
+    const { title, desc, categories, short, featureImg, slug, file, video } =
+      req.body;
 
     const fileArray = Array.isArray(file)
       ? file.map((f) => ({ path: f.path }))
@@ -614,11 +654,21 @@ exports.userUpdatepostByPut = async (req, res) => {
     // Get old post for comparison
     const oldPost = await Post.findOne({ _id: id, user: userId }).lean();
     if (!oldPost) {
-      return res.status(404).json({ success: false, message: "Post not found or unauthorized" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Post not found or unauthorized" });
     }
 
     const changes = {};
-    const fieldsToCheck = { title, desc, short, slug, featureImg, file: fileArray };
+    const fieldsToCheck = {
+      title,
+      desc,
+      short,
+      slug,
+      featureImg,
+      file: fileArray,
+      video,
+    };
 
     for (const key in fieldsToCheck) {
       const newVal = fieldsToCheck[key];
@@ -635,7 +685,9 @@ exports.userUpdatepostByPut = async (req, res) => {
     }
 
     // Compare categories
-    const oldCats = (oldPost.categories || []).map((c) => c._id?.toString?.() || c.toString()).sort();
+    const oldCats = (oldPost.categories || [])
+      .map((c) => c._id?.toString?.() || c.toString())
+      .sort();
     const newCats = (Array.isArray(categories) ? categories : [categories])
       .filter(Boolean)
       .map((c) => c.toString())
@@ -660,6 +712,7 @@ exports.userUpdatepostByPut = async (req, res) => {
           featureImg,
           file: fileArray,
           categories: newCats.map((catId) => ({ _id: catId })),
+          video,
         },
         $push: {
           revisions: {
@@ -689,8 +742,6 @@ exports.userUpdatepostByPut = async (req, res) => {
     });
   }
 };
-
-
 
 exports.postDelete = async (req, res) => {
   const ability = defineAbilityFor(req.user);
@@ -810,15 +861,17 @@ exports.authorBlogs = async (req, res) => {
   try {
     const perPage = parseInt(req.query.perPage) || 20;
     const page = parseInt(req.query.page) || 1;
-    const userId = await User.findOne({ username: user }).select("username rule")
+    const userId = await User.findOne({ username: user }).select(
+      "username rule"
+    );
     if (!userId) {
       return res.status(404).json({
         success: false,
         message: "Not found",
       });
     }
-    console.log(req.user)
-    if (!req.user.rule || req.user.rule === "user" ) {
+    console.log(req.user);
+    if (!req.user.rule || req.user.rule === "user") {
       return res.status(404).json({
         success: false,
         message: "Not found",
@@ -855,7 +908,7 @@ exports.authorBlogs = async (req, res) => {
       posts,
       blogs: posts, // Duplicate of `posts`, consider removing
       newBlogs,
-      userId
+      userId,
     });
   } catch (err) {
     console.error("Error fetching posts by category:", err);

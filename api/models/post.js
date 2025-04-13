@@ -22,6 +22,7 @@ const postSchema = mongoose.Schema(
     isFeature: { type: Boolean, default: false },
     short: { type: String, default: "" },
     file: [{ type: Object, required: false }],
+    video: [{ type: Object, required: false }],
     revisions: [
       {
         user: { type: Schema.Types.ObjectId, ref: "User" }, // Who updated

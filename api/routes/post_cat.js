@@ -27,6 +27,8 @@ router.post(
         isFeature,
         translations,
         isDefault,
+        block,
+        iconImg
       } = req.body;
       const category = new PostCat({
         name,
@@ -38,6 +40,8 @@ router.post(
         isFeature,
         translations,
         isDefault,
+        block,
+        iconImg
       });
       buildPostCatAncestors(category._id, parent);
       ForbiddenError.from(ability).throwUnlessCan("create", category);
@@ -124,8 +128,9 @@ router.put(
         featureImg,
         isFeature,
         isDefault,
+        block,
+        iconImg
       } = req.body;
-
       const category = await PostCat.findById({ _id });
       ForbiddenError.from(ability).throwUnlessCan("update", category);
       (category.name = name), (category.slug = slug);
@@ -133,6 +138,8 @@ router.put(
       (category.content = content), (category.featureImg = featureImg);
       category.isFeature = isFeature;
       category.isDefault = isDefault;
+      category.block = block;
+      category.iconImg = iconImg
       if (parent) {
         category.parent = parent;
         buildPostHierarchyAncestors(category._id, parent);

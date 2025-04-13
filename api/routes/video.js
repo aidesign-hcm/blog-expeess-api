@@ -4,6 +4,7 @@ const path = require("path");
 const Video = require("../models/video");
 const passport = require('passport');
 const fs = require("fs")
+const mime = require("mime-types"); 
 
 const videoDirectory = path.join(__dirname, 'uploads', 'video');
 
@@ -120,7 +121,6 @@ router.get("/v/:id", async (req, res) => {
   }
 });
 
-// Route to stream the video (this is the endpoint that TipTap will use in the video tag)
 
 // Route to serve video stream
 router.get('/stream/:id', async (req, res) => {
@@ -133,7 +133,8 @@ router.get('/stream/:id', async (req, res) => {
     }
 
     const videoPath = path.resolve(__dirname, "..", "..", video.videoPath); // Full path to the video file
-    console.log(videoPath)
+    console.log("Video Path: ", videoPath);
+    
     // Check if the file exists
     if (!fs.existsSync(videoPath)) {
       return res.status(404).send("File does not exist");
@@ -143,10 +144,19 @@ router.get('/stream/:id', async (req, res) => {
     const fileSize = stat.size;
     const range = req.headers.range;
 
+    // Get the MIME type based on the file extension using mime-types library
+    const ext = path.extname(videoPath).toLowerCase();
+    const mimeType = mime.lookup(ext); // Get MIME type based on the file extension
+
+    if (!mimeType) {
+      return res.status(415).send("Unsupported media type");
+    }
+
     // Set headers to allow CORS and video content
-    res.setHeader("Access-Control-Allow-Origin", "*");  // Allow all domains (you can restrict this for security)
-    res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS"); // Allow GET and OPTIONS methods
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type"); // Allow Content-Type header
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Range");
+    
 
     // Handle Range requests (for streaming)
     if (range) {
@@ -161,7 +171,7 @@ router.get('/stream/:id', async (req, res) => {
         "Content-Range": `bytes ${start}-${end}/${fileSize}`,
         "Accept-Ranges": "bytes",
         "Content-Length": chunkSize,
-        "Content-Type": "video/mp4", // Assuming the video is in mp4 format
+        "Content-Type": mimeType, // Use the determined MIME type
       });
 
       file.pipe(res);
@@ -169,8 +179,10 @@ router.get('/stream/:id', async (req, res) => {
       // If no range is specified, stream the entire file
       res.writeHead(200, {
         "Content-Length": fileSize,
-        "Content-Type": "video/mp4", // Assuming the video is in mp4 format
+        "Content-Type": mime.lookup(videoPath) || "application/octet-stream",
+        "Accept-Ranges": "bytes",
       });
+      
 
       fs.createReadStream(videoPath).pipe(res);
     }
