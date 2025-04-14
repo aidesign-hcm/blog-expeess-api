@@ -30,6 +30,7 @@ exports.getHomePosts = async (req, res) => {
         slug: category.slug,
         index: category.index,
         block: category.block,
+        iconImg: category.iconImg,
         posts: posts,
       });
     }
@@ -60,6 +61,7 @@ exports.getHomePosts = async (req, res) => {
         },
       },
     ]);
+    console.log(allPostPerCat)
     res.status(200).json({
       message: "this is all posts",
       success: true,
