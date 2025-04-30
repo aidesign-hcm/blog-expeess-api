@@ -4,6 +4,10 @@ const { ForbiddenError } = require("@casl/ability");
 const PostCat = require("../models/post_cat");
 const config = require("../config/index");
 const User = require("../models/user");
+const fs = require("fs");
+const path = require("path");
+const url = require("url");
+const Video = require("../models/video");
 
 exports.getHomePosts = async (req, res) => {
   try {
@@ -61,7 +65,6 @@ exports.getHomePosts = async (req, res) => {
         },
       },
     ]);
-    console.log(allPostPerCat)
     res.status(200).json({
       message: "this is all posts",
       success: true,
@@ -150,7 +153,7 @@ exports.postByCat = async (req, res) => {
           "categories.__v": 0,
         },
       },
-    ])
+    ]);
     res.status(200).json({
       success: true,
       total, // Corrected total count
@@ -183,11 +186,11 @@ exports.postByUser = async (req, res) => {
     const posts = await Post.find({
       $and: [{ user: _id }],
     })
-    .select('-desc -revisions')
+      .select("-desc -revisions")
       .sort({ createdAt: -1 }) // Use -1 for descending order
       .skip(perPage * (page - 1))
       .limit(perPage)
-      .populate("categories")
+      .populate("categories");
     res.status(200).json({
       success: true,
       total, // Corrected total count
@@ -745,26 +748,26 @@ exports.userUpdatepostByPut = async (req, res) => {
   }
 };
 
-exports.postDelete = async (req, res) => {
-  const ability = defineAbilityFor(req.user);
+function getLocalPathFromUrl(imageUrl) {
   try {
-    // eslint-disable-next-line prefer-destructuring
-    const id = req.params.id;
-    const post = await Post.findById({ _id: id }).exec();
-    ForbiddenError.from(ability).throwUnlessCan("delete", post);
-    await post.remove();
-    res.status(200).json({
-      success: true,
-      message: "post has been delete",
-    });
-  } catch (err) {
-    res.status(500).json({
-      message: err,
-      success: false,
-    });
+    const parsed = new URL(imageUrl); // built-in URL parser
+    // This gives you just "uploads/media/..."
+    return parsed.pathname.replace(/^\/+/, ""); // remove starting slashes
+  } catch (e) {
+    // Fallback if it's already a relative path
+    return imageUrl.replace(/^\/+/, "");
   }
-  // eslint-disable-next-line eol-last
+}
+
+exports.postDelete = async (req, res) => {
+  try {
+    await deletePostAndMedia(req.params.id, req.user);
+    res.status(200).json({ success: true, message: "Post has been deleted" });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
 };
+
 
 exports.postActiveMulti = async (req, res) => {
   try {
@@ -789,24 +792,105 @@ exports.postActiveMulti = async (req, res) => {
   }
 };
 
+const deletePostAndMedia = async (postId, user) => {
+  const ability = defineAbilityFor(user);
+  const post = await Post.findById(postId).exec();
+
+  if (!post) throw new Error("Post not found");
+  ForbiddenError.from(ability).throwUnlessCan("delete", post);
+
+  // === Delete feature image ===
+  if (post.featureImg?.path) {
+    const localPath = getLocalPathFromUrl(post.featureImg.path);
+    const fullPath = path.join(__dirname, '..', '..', localPath);
+    if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+  }
+
+  // === Delete images in desc ===
+  const imageRegex = /<img[^>]+src="([^">]+)"/g;
+  let match;
+  while ((match = imageRegex.exec(post.desc)) !== null) {
+    const imgUrl = match[1];
+    if (imgUrl.includes('/uploads/')) {
+      const localPath = getLocalPathFromUrl(imgUrl);
+      const fullPath = path.join(__dirname, '..', '..', localPath);
+      if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+    }
+  }
+
+  // === Delete file ===
+  if (Array.isArray(post.file)) {
+    for (const f of post.file) {
+      if (f.path) {
+        const localPath = getLocalPathFromUrl(f.path);
+        const fullPath = path.join(__dirname, '..', '..', localPath);
+        if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+      }
+    }
+  }
+
+  // === Delete videos in post.video ===
+  if (Array.isArray(post.video)) {
+    for (const videoUrl of post.video) {
+      const match = videoUrl.match(/\/api\/video\/stream\/([^/]+)/);
+      if (match && match[1]) {
+        const videoId = match[1];
+        const videoDoc = await Video.findById(videoId).exec();
+        if (videoDoc?.videoPath) {
+          const videoPath = getLocalPathFromUrl(videoDoc.videoPath);
+          const fullPath = path.join(__dirname, '..', '..', videoPath);
+          if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+        }
+        await Video.findByIdAndDelete(videoId);
+      }
+    }
+  }
+
+  // === Delete video in desc ===
+  const videoRegex = /\/api\/video\/stream\/([a-fA-F0-9]{24})/g;
+  let videoMatch;
+  while ((videoMatch = videoRegex.exec(post.desc)) !== null) {
+    const videoId = videoMatch[1];
+    const videoDoc = await Video.findById(videoId).exec();
+    if (videoDoc?.videoPath) {
+      const videoPath = getLocalPathFromUrl(videoDoc.videoPath);
+      const fullPath = path.join(__dirname, '..', '..', videoPath);
+      if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+    }
+    await Video.findByIdAndDelete(videoId);
+  }
+
+  // Finally, remove the post
+  await post.remove();
+};
+
+
 exports.postDeleteMulti = async (req, res) => {
   try {
     const { ids } = req.body;
-    let result = ids.map((a) => a);
+    const deleted = [];
+    const failed = [];
 
-    const update = await Post.deleteMany(
-      { _id: { $in: result } },
-      { upsert: true }
-    );
+    for (const id of ids) {
+      try {
+        await deletePostAndMedia(id, req.user);
+        deleted.push(id);
+      } catch (err) {
+        console.error(`Failed to delete post ${id}:`, err.message);
+        failed.push({ id, error: err.message });
+      }
+    }
+
     res.status(200).json({
       success: true,
+      deleted,
+      failed,
     });
   } catch (err) {
-    res.status(404).json({
-      error: err,
-    });
+    res.status(500).json({ success: false, message: err.message });
   }
 };
+
 
 exports.searchBlogs = async (req, res) => {
   try {

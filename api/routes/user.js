@@ -32,6 +32,12 @@ router.post(
 
 router.post("/login", deviceLimiter, userController.userLogin);
 
+router.get('/check-code/:codeId', userController.checkCode);
+
+router.post("/verify-code", deviceLimiter, userController.verifyCode);
+
+router.post("/verify-app-code", deviceLimiter, userController.verifyAppCode);
+
 router.post("/ifregiter", userController.checkIfregister);
 
 router.post("/ifemailregiter", userController.checkIfEmailRegister);
@@ -46,6 +52,12 @@ router.get(
   "/user/",
   passport.authenticate("user", { session: false }), checkBlacklistedToken,
   userController.userProfile
+);
+
+router.get(
+  "/user/profile",
+  passport.authenticate("user", { session: false }), checkBlacklistedToken,
+  userController.userprivateProfile
 );
 
 router.post("/blacklist-token/", passport.authenticate("user", { session: false }), userController.CreateToken);
@@ -78,6 +90,16 @@ router.put(
   passport.authenticate("user", { session: false }), checkBlacklistedToken,
   userController.changePassword
 );
+
+router.put(
+  "/active-mail",
+  passport.authenticate("user", { session: false }), checkBlacklistedToken,
+  userController.activeMail
+);
+
+router.put("/active-authapp",  passport.authenticate("user", { session: false }), checkBlacklistedToken, userController.enableAuthApp);
+
+router.put("/verify-authapp",  passport.authenticate("user", { session: false }), checkBlacklistedToken, userController.verifyAuthApp);
 
 router.put(
   "/user/avatar",

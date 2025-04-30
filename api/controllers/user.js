@@ -7,6 +7,7 @@ const axios = require("axios");
 const User = require("../models/user");
 const Token = require("../models/token");
 const Passcode = require("../models/Passcode.js");
+const VerificationCode = require("../models/VerificationCode");
 const {
   genToken,
   adminGenToken,
@@ -20,10 +21,16 @@ const {
   appForgotPass,
   SendmailUserSignUp,
 } = require("../mailform/register");
+const { sendVerificationCode } = require("../mailform/emailService");
 const Setting = require("../models/setting");
 const jwt = require("jsonwebtoken"); // If using JWT
+const speakeasy = require("speakeasy");
+const QRCode = require("qrcode");
 
-const { logUserLogin , logUserLogout} = require("../middleware/logUserActivity");
+const {
+  logUserLogin,
+  logUserLogout,
+} = require("../middleware/logUserActivity");
 
 exports.userSignup = async (req, res) => {
   try {
@@ -31,7 +38,7 @@ exports.userSignup = async (req, res) => {
     const newUser = new User(req.newUser);
     const onSetting = await Setting.findOne().exec();
     if (!onSetting.openReg) {
-      return res. v.json({
+      return res.v.json({
         success: false,
         message: "Đang khóa đăng ký tài khoản.",
       });
@@ -94,6 +101,42 @@ exports.userLogin = async (req, res) => {
       foundUser.comparePassword(req.body.password) &&
       !foundUser.private
     ) {
+      if (foundUser.isAuthApp) {
+        const nanoid = customAlphabet("1234567890abcdef", 6);
+        const code = nanoid();
+        const expiresAt = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes
+        const verification = await VerificationCode.create({
+          userId: foundUser._id,
+          code,
+          expiresAt,
+        });
+
+        res.status(200).json({
+          message: "This is 2FA",
+          codeId: verification.codeId,
+          isTwoAuthApp: true,
+        });
+        return;
+      } else if (foundUser.isMail) {
+        const nanoid = customAlphabet("1234567890abcdef", 6);
+        const code = nanoid();
+        const expiresAt = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes
+        const verification = await VerificationCode.create({
+          userId: foundUser._id,
+          code,
+          expiresAt,
+        });
+
+        // Send email
+        await sendVerificationCode(email, code);
+
+        res.status(200).json({
+          message: "Verification code sent",
+          codeId: verification.codeId,
+          isTwoAuth: true,
+        });
+        return;
+      }
       const token = genToken(foundUser);
       const user = await User.findById({ _id: foundUser._id }).select(
         "username email _id rule"
@@ -121,6 +164,119 @@ exports.userLogin = async (req, res) => {
   } catch (err) {
     res.status(500).json({
       error: err,
+      success: false,
+      message: "Please check correctness and try again",
+    });
+  }
+};
+
+exports.checkCode = async (req, res, next) => {
+  try {
+    const { codeId } = req.params;
+    const verification = await VerificationCode.findOne({
+      codeId,
+      expiresAt: { $gt: new Date() },
+    });
+
+    if (!verification) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Code not found or expired" });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Code is valid",
+      userId: verification.userId,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.verifyCode = async (req, res, next) => {
+  try {
+    const { userId, code } = req.body;
+    if (!userId || !code)
+      return res.status(400).json({ message: "User ID and code are required" });
+
+    const verification = await VerificationCode.findOne({
+      userId,
+      code,
+      expiresAt: { $gt: new Date() },
+    });
+
+    if (!verification) {
+      return res.status(400).json({ message: "Invalid or expired code" });
+    }
+
+    // Delete used code
+    await VerificationCode.deleteOne({ _id: verification._id });
+
+    // Generate JWT
+    // const token = jwt.sign({ userId }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    const user = await User.findById({ _id: userId }).select(
+      "username email _id rule"
+    );
+
+    const token = genToken(user);
+
+    const expiresAt = new Date();
+    expiresAt.setHours(expiresAt.getHours() + 168);
+
+    await logUserLogin(user, req, token);
+    res.status(200).json({
+      success: true,
+      token,
+      user,
+      expiresAt,
+      message: "Success",
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: err,
+      success: false,
+      message: "Please check correctness and try again",
+    });
+  }
+};
+
+exports.verifyAppCode = async (req, res, next) => {
+  try {
+    const { userId, code } = req.body;
+    if (!userId || !code)
+      return res.status(400).json({ message: "User ID and code are required" });
+    const foundUser = await User.findById({ _id: userId }).select();
+    const verified = speakeasy.totp.verify({
+      secret: foundUser.twoFactorSecret,
+      encoding: "base32",
+      token: code,
+    });
+
+    if (!verified) {
+      return res.status(400).json({ message: "Invalid or expired code" });
+    }
+    const user = await User.findById({ _id: userId }).select(
+      "username email _id rule twoFactorSecret"
+    );
+
+    const token = genToken(user);
+
+    const expiresAt = new Date();
+    expiresAt.setHours(expiresAt.getHours() + 168);
+
+    await logUserLogin(user, req, token);
+    res.status(200).json({
+      success: true,
+      token,
+      user,
+      expiresAt,
+      message: "Success",
+    });
+  } catch (error) {
+    console.log(error )
+    res.status(500).json({
+      error: error,
       success: false,
       message: "Please check correctness and try again",
     });
@@ -182,22 +338,48 @@ exports.userProfile = async (req, res) => {
   }
 };
 
+exports.userprivateProfile = async (req, res) => {
+  const ability = defineAbilityFor(req.user);
+  try {
+    // eslint-disable-next-line no-underscore-dangle
+    const id = req.user._id;
+    const user = await User.findById({ _id: id }).select(
+      "username email phonenumber rule isMail isAuthApp"
+    );
+    ForbiddenError.from(ability).throwUnlessCan("read", user);
+    res.json({
+      success: true,
+      user,
+      message: "success",
+    });
+  } catch (err) {
+    res.status(500).json({ error: err });
+  }
+};
 
 exports.CreateToken = async (req, res) => {
   try {
     const { sessionToken } = req.body;
-    
+
     if (!sessionToken) {
-      return res.status(400).json({ success: false, message: "Missing sessionToken" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing sessionToken" });
     }
     const decoded = jwt.decode(sessionToken);
-    
+
     if (!decoded || !decoded.exp) {
-      return res.status(400).json({ success: false, message: "Invalid token or missing expiration" });
+      return res.status(400).json({
+        success: false,
+        message: "Invalid token or missing expiration",
+      });
     }
     const expiresAt = new Date(decoded.exp * 1000);
 
-    const newToken = new Token({ sessionToken, sessionTokenExpiresAt: expiresAt });
+    const newToken = new Token({
+      sessionToken,
+      sessionTokenExpiresAt: expiresAt,
+    });
     await newToken.save();
 
     const user = req.user;
@@ -206,7 +388,7 @@ exports.CreateToken = async (req, res) => {
 
     res.json({ success: true, message: "Token created successfully" });
   } catch (err) {
-    console.log(err)
+    console.log(err);
     res.status(500).json({ error: err.message });
   }
 };
@@ -455,6 +637,122 @@ exports.changePassword = async (req, res) => {
       success: false,
       message: "Something went wrong",
     });
+  }
+};
+
+exports.activeMail = async (req, res) => {
+  const ability = defineAbilityFor(req.user);
+  const userId = req.user._id;
+  // const { email, username, phonenumber } = req.body;
+  const { isMail } = req.body;
+  try {
+    const user = await User.findById({ _id: userId });
+
+    ForbiddenError.from(ability).throwUnlessCan("update", user);
+
+    if (user) {
+      user.isMail = isMail;
+    }
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+    });
+  } catch (err) {
+    res.json(500).status({
+      error: err,
+      success: false,
+      message: "Something went wrong",
+    });
+  }
+};
+
+exports.enableAuthApp = async (req, res) => {
+  const ability = defineAbilityFor(req.user);
+  const { _id } = req.user;
+  const { isAuthApp } = req.body;
+  try {
+    const user = await User.findById({ _id: _id });
+    if (!user) return res.status(404).json({ message: "User not found" });
+    if (!isAuthApp) {
+      ForbiddenError.from(ability).throwUnlessCan("update", user);
+
+      if (user) {
+        user.isAuthApp = isAuthApp;
+      }
+      await user.save();
+
+      res.status(200).json({
+        success: true,
+      });
+      return;
+    }
+
+    const secret = speakeasy.generateSecret({
+      name: `Blog:${user.email}`,
+    });
+    user.twoFactorSecret = secret.base32;
+    await user.save();
+
+    QRCode.toDataURL(secret.otpauth_url, (err, data_url) => {
+      if (err)
+        return res
+          .status(500)
+          .json({ message: "Error generating QR code", success: false });
+      res
+        .status(200)
+        .json({ qrCode: data_url, secret: secret.base32, success: true });
+    });
+  } catch (err) {
+    res.status(500).json({ error: err });
+  }
+};
+
+exports.verifyAuthApp = async (req, res) => {
+  try {
+    const ability = defineAbilityFor(req.user);
+    const { _id } = req.user;
+    const { token } = req.body;
+
+    const user = await User.findById(_id);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const verified = speakeasy.totp.verify({
+      secret: user.twoFactorSecret,
+      encoding: "base32",
+      token,
+    });
+
+    if (verified) {
+      user.isAuthApp = true;
+      await user.save();
+      res.json({ message: "2FA enabled successfully", success: true });
+    } else {
+      res.status(400).json({ message: "Invalid 2FA code", success: false });
+    }
+  } catch (err) {
+    res.status(500).json({ error: err });
+  }
+};
+
+exports.CheckAuthApp = async (req, res) => {
+  const { userId, token } = req.body;
+  const user = await User.findById(userId);
+  if (!user) return res.status(404).json({ message: "User not found" });
+
+  const verified = speakeasy.totp.verify({
+    secret: user.twoFactorSecret,
+    encoding: "base32",
+    token,
+  });
+
+  if (verified) {
+    const jwtToken = jwt.sign({ id: user._id }, "secret_key", {
+      expiresIn: "1h",
+    });
+    res.json({ message: "2FA verified", token: jwtToken });
+  } else {
+    res.status(400).json({ message: "Invalid 2FA code" });
   }
 };
 

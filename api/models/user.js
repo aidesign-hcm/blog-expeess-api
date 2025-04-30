@@ -28,6 +28,15 @@ const userSchema = new Schema(
       type: Boolean,
       default: false,
     },
+    isMail: {
+      type: Boolean,
+      default: false,
+    },
+    isAuthApp: {
+      type: Boolean,
+      default: false,
+    },
+    twoFactorSecret: String,
     rule: { type: String, enum: ["admin", "manager", "editor", "user"], default: "user" },
     categories: [
       {
